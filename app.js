@@ -1,29 +1,139 @@
-const URL="https://bflyuzgxhqdovrahycgg.supabase.co";
-const KEY="sb_publishable_GDOsyPod6iJuKWT1AWfgUQ_nvS-Z68V";
-const db=supabase.createClient(URL,KEY);
-function withTimeout(promise,ms=30000){
-  return Promise.race([
-    promise,
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error("TIMEOUT_SUPABASE")),ms))
-  ]);
-}
+const SUPABASE_URL="https://bflyuzgxhqdovrahycgg.supabase.co";
+const SUPABASE_KEY="sb_publishable_GDOsyPod6iJuKWT1AWfgUQ_nvS-Z68V";
+const SESSION_KEY="arn_supabase_session_v1";
+const REQUEST_TIMEOUT=30000;
 const $=id=>document.getElementById(id);
-
 const DB="arn-offline",STORE="queue";
 
-function setStatus(text, kind="online"){
+function withTimeout(task,ms=REQUEST_TIMEOUT){
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),ms);
+  return Promise.resolve().then(()=>typeof task==="function"?task(controller.signal):task)
+    .finally(()=>clearTimeout(timer))
+    .catch(e=>{
+      if(e?.name==="AbortError") throw new Error("TIMEOUT_SUPABASE");
+      throw e;
+    });
+}
+
+function setStatus(text,kind="online"){
   const el=$("status");
   if(!el)return;
   el.innerHTML=`<span class="status-dot"></span><span>${text}</span>`;
   const dot=el.querySelector(".status-dot");
-  if(dot){
-    dot.style.background=kind==="error"?"#d34b42":kind==="offline"?"#aaa":"#d8a12a";
-  }
+  if(dot) dot.style.background=kind==="error"?"#d34b42":kind==="offline"?"#aaa":"#d8a12a";
 }
 function hideLoader(){
   const el=$("loader");
   if(el) el.classList.add("hide");
 }
+function escapeHtml(v){
+  return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+}
+
+function readSession(){
+  try{
+    const raw=localStorage.getItem(SESSION_KEY);
+    return raw?JSON.parse(raw):null;
+  }catch{return null;}
+}
+function saveSession(session){
+  try{localStorage.setItem(SESSION_KEY,JSON.stringify(session));}catch{}
+}
+function clearSession(){
+  try{localStorage.removeItem(SESSION_KEY);}catch{}
+}
+function sessionUsable(session){
+  if(!session?.access_token)return false;
+  const expiresAt=Number(session.expires_at||0)*1000;
+  return !expiresAt || expiresAt>Date.now()+60000;
+}
+
+async function authRequest(path,options={}){
+  return withTimeout(signal=>fetch(SUPABASE_URL+path,{
+    ...options,
+    signal,
+    headers:{
+      apikey:SUPABASE_KEY,
+      "Content-Type":"application/json",
+      ...(options.headers||{})
+    }
+  }));
+}
+async function readJson(response){
+  let body=null;
+  try{body=await response.json();}catch{}
+  if(!response.ok){
+    const msg=body?.msg||body?.message||body?.error_description||body?.error||`HTTP ${response.status}`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+async function signInAnonymously(){
+  const response=await authRequest("/auth/v1/signup",{
+    method:"POST",
+    body:JSON.stringify({data:{}})
+  });
+  const data=await readJson(response);
+  if(!data?.access_token) throw new Error("Login anonim tidak menghasilkan sesi.");
+  saveSession(data);
+  return data;
+}
+
+async function refreshSession(session){
+  if(!session?.refresh_token) return null;
+  try{
+    const response=await authRequest("/auth/v1/token?grant_type=refresh_token",{
+      method:"POST",
+      body:JSON.stringify({refresh_token:session.refresh_token})
+    });
+    const data=await readJson(response);
+    if(!data?.access_token) return null;
+    saveSession(data);
+    return data;
+  }catch(e){
+    console.warn("SESSION REFRESH ERROR:",e);
+    return null;
+  }
+}
+
+async function auth(){
+  let session=readSession();
+  if(sessionUsable(session)) return true;
+  if(session?.refresh_token){
+    session=await refreshSession(session);
+    if(sessionUsable(session)) return true;
+  }
+  clearSession();
+  await signInAnonymously();
+  return true;
+}
+
+async function dataRequest(path,options={}){
+  await auth();
+  let session=readSession();
+  const run=async current=>{
+    return withTimeout(signal=>fetch(SUPABASE_URL+path,{
+      ...options,
+      signal,
+      headers:{
+        apikey:SUPABASE_KEY,
+        Authorization:`Bearer ${current.access_token}`,
+        "Content-Type":"application/json",
+        ...(options.headers||{})
+      }
+    }));
+  };
+  let response=await run(session);
+  if(response.status===401){
+    const refreshed=await refreshSession(session);
+    if(!refreshed) throw new Error("Sesi login kedaluwarsa. Silakan muat ulang aplikasi.");
+    response=await run(refreshed);
+  }
+  return response;
+}
+
 function idb(){
   return new Promise((ok,no)=>{
     let r=indexedDB.open(DB,1);
@@ -58,16 +168,9 @@ async function delQ(id){
     t.onerror=()=>no(t.error);
   });
 }
-async function auth(){
-  let s=await db.auth.getSession();
-  if(s.error) throw new Error("Gagal memeriksa sesi: "+s.error.message);
-  if(s.data.session) return true;
-  let r=await db.auth.signInAnonymously();
-  if(r.error) throw new Error("Login anonim gagal: "+r.error.message);
-  return !!r.data?.session;
-}
+
 async function load(){
-  let q=($("search")?.value||"").toLowerCase().trim();
+  const q=($('search')?.value||'').toLowerCase().trim();
   if(!navigator.onLine){
     setStatus("Offline","offline");
     if($("inventory")) $("inventory").innerHTML='<div class="loading-row">Offline. Hubungkan internet untuk memuat stok.</div>';
@@ -75,16 +178,14 @@ async function load(){
   }
   setStatus("Memuat...");
   try{
-    let r=await withTimeout(
-      db.from("v_inventory_stock")
-        .select("item_code,item_name,stock_current,current_status")
-        .order("item_code"),
-      30000
+    const response=await dataRequest(
+      "/rest/v1/v_inventory_stock?select=item_code,item_name,stock_current,current_status&order=item_code",
+      {method:"GET",headers:{Accept:"application/json"}}
     );
-    if(r.error) throw new Error(r.error.message);
-    let a=(r.data||[]).filter(x=>{
-      let code=String(x.item_code??"").toLowerCase();
-      let name=String(x.item_name??"").toLowerCase();
+    const data=await readJson(response);
+    const a=(data||[]).filter(x=>{
+      const code=String(x.item_code??"").toLowerCase();
+      const name=String(x.item_name??"").toLowerCase();
       return !q||code.includes(q)||name.includes(q);
     });
     $("inventory").innerHTML=a.map(x=>`
@@ -107,28 +208,42 @@ async function load(){
     throw e;
   }
 }
-function escapeHtml(v){
-  return String(v).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
+
+async function insertMovement(data){
+  const response=await dataRequest("/rest/v1/stock_movements",{
+    method:"POST",
+    headers:{Prefer:"return=minimal"},
+    body:JSON.stringify(data)
+  });
+  await readJson(response);
 }
+
 async function sync(){
   if(!navigator.onLine) return;
   try{
-    await auth();
+    await withTimeout(()=>auth(),REQUEST_TIMEOUT);
     for(const x of await allQ()){
-      let r=await db.from("stock_movements").insert(x.data);
-      if(!r.error) await delQ(x.id);
-      else console.error("SYNC ERROR:",r.error);
+      try{
+        await insertMovement(x.data);
+        await delQ(x.id);
+      }catch(e){
+        console.error("SYNC ERROR:",e);
+        break;
+      }
     }
-  }catch(e){ console.error("SYNC/AUTH ERROR:",e); }
+  }catch(e){
+    console.error("SYNC/AUTH ERROR:",e);
+  }
 }
+
 $("save").onclick=async()=>{
-  let code=($("code")?.value||"").trim().toUpperCase();
-  let qty=Number($("qty")?.value);
+  const code=($("code")?.value||"").trim().toUpperCase();
+  const qty=Number($("qty")?.value);
   if(!code||qty<1){
     $("msg").textContent="Isi kode dan jumlah.";
     return;
   }
-  let data={
+  const data={
     movement_code:"ARN-"+Date.now(),
     movement_date:new Date().toISOString().slice(0,10),
     item_code:code,
@@ -138,9 +253,7 @@ $("save").onclick=async()=>{
   };
   try{
     if(!navigator.onLine) throw new Error("OFFLINE");
-    await auth();
-    let r=await db.from("stock_movements").insert(data);
-    if(r.error) throw r.error;
+    await withTimeout(()=>insertMovement(data),REQUEST_TIMEOUT);
     $("msg").textContent="Tersimpan ke Supabase.";
     $("code").value="";
     $("qty").value="1";
@@ -153,35 +266,37 @@ $("save").onclick=async()=>{
       setStatus("Offline","offline");
     }else{
       console.error(e);
-      $("msg").textContent="Gagal menyimpan: "+e.message;
+      $("msg").textContent=e.message==="TIMEOUT_SUPABASE"?"Koneksi ke server lambat. Transaksi belum dikirim.":"Gagal menyimpan: "+e.message;
     }
   }
 };
+
 $("search").oninput=()=>load().catch(()=>{});
 window.addEventListener("online",async()=>{
   setStatus("Sinkronisasi...");
   await sync();
   try{await load();}catch{}
 });
-window.addEventListener("offline",()=>{
-  setStatus("Offline","offline");
-});
+window.addEventListener("offline",()=>setStatus("Offline","offline"));
+
 (async()=>{
   try{
     if(navigator.onLine){
-      await withTimeout(auth(),30000);
-      await sync();
-      await load();
+      await withTimeout(()=>auth(),REQUEST_TIMEOUT);
+      await withTimeout(()=>sync(),REQUEST_TIMEOUT);
+      await withTimeout(()=>load(),REQUEST_TIMEOUT);
     }else{
       setStatus("Offline","offline");
       $("inventory").innerHTML='<div class="loading-row">Offline. Hubungkan internet untuk memuat stok.</div>';
     }
   }catch(e){
     console.error("START ERROR:",e);
-    setStatus("Gagal","error");
-    $("inventory").innerHTML=`<div class="item"><b>Koneksi Supabase gagal</b><br><small>${escapeHtml(e.message)}</small></div>`;
+    setStatus(e?.message==="TIMEOUT_SUPABASE"?"Koneksi lambat":"Gagal","error");
+    $("inventory").innerHTML=e?.message==="TIMEOUT_SUPABASE"
+      ?'<div class="item"><b>Koneksi ke server lambat</b><br><small>Stok belum selesai dimuat. Tekan Refresh saat koneksi lebih stabil.</small></div>'
+      :`<div class="item"><b>Koneksi Supabase gagal</b><br><small>${escapeHtml(e.message)}</small></div>`;
   }finally{
-    setTimeout(hideLoader,180);
+    hideLoader();
   }
   if("serviceWorker" in navigator){
     try{await navigator.serviceWorker.register("sw.js");}
