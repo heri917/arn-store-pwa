@@ -2,20 +2,13 @@
   "name": "ARN Store Stok",
   "short_name": "ARN Store",
   "start_url": "./",
-  "scope": "./",
   "display": "standalone",
-  "background_color": "#f4f4f5",
+  "background_color": "#111111",
   "theme_color": "#111111",
   "lang": "id",
   "icons": [
     {
-      "src": "./icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "./icon-512.png",
+      "src": "app-icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
