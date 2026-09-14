@@ -1,6 +1,12 @@
 const URL="https://bflyuzgxhqdovrahycgg.supabase.co";
 const KEY="sb_publishable_GDOsyPod6iJuKWT1AWfgUQ_nvS-Z68V";
 const db=supabase.createClient(URL,KEY);
+function withTimeout(promise,ms=30000){
+  return Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error("TIMEOUT_SUPABASE")),ms))
+  ]);
+}
 const $=id=>document.getElementById(id);
 
 const DB="arn-offline",STORE="queue";
@@ -69,9 +75,12 @@ async function load(){
   }
   setStatus("Memuat...");
   try{
-    let r=await db.from("v_inventory_stock")
-      .select("item_code,item_name,stock_current,current_status")
-      .order("item_code");
+    let r=await withTimeout(
+      db.from("v_inventory_stock")
+        .select("item_code,item_name,stock_current,current_status")
+        .order("item_code"),
+      30000
+    );
     if(r.error) throw new Error(r.error.message);
     let a=(r.data||[]).filter(x=>{
       let code=String(x.item_code??"").toLowerCase();
@@ -88,6 +97,11 @@ async function load(){
     setStatus("Online");
   }catch(e){
     console.error(e);
+    if(e?.message==="TIMEOUT_SUPABASE"){
+      setStatus("Koneksi lambat","error");
+      $("inventory").innerHTML='<div class="item"><b>Koneksi ke server lambat</b><br><small>Stok belum selesai dimuat. Tekan Refresh saat koneksi lebih stabil.</small></div>';
+      return;
+    }
     setStatus("Error","error");
     $("inventory").innerHTML=`<div class="item"><b>Gagal memuat stok</b><br><small>${escapeHtml(e.message)}</small></div>`;
     throw e;
@@ -155,7 +169,7 @@ window.addEventListener("offline",()=>{
 (async()=>{
   try{
     if(navigator.onLine){
-      await auth();
+      await withTimeout(auth(),30000);
       await sync();
       await load();
     }else{
