@@ -1,1 +1,51 @@
-<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#111"><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="styles.css"><title>ARN Store Stok</title></head><body><header><b class="brand"><img class="brand-logo" src="icons/icon-192.png" alt="ARN Store"><span>ARN Store</span></b><span id="status">Memuat…</span></header><main><section><h2>Stok Barang</h2><input id="search" placeholder="Cari kode / nama HP"><div id="inventory">Memuat…</div></section><section><h2>Transaksi</h2><input id="code" placeholder="Kode barang, contoh TG-G18"><select id="type"><option>KELUAR</option><option>MASUK</option></select><input id="qty" type="number" min="1" value="1"><input id="note" placeholder="Keterangan"><button id="save">Simpan</button><p id="msg"></p></section></main><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="app.js"></script></body></html>
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./styles.css">
+  <title>ARN Store Stok</title>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="brand-logo" src="./icon-192.png" alt="ARN Store">
+      <strong>ARN Store</strong>
+    </div>
+    <span id="status" aria-live="polite">Menghubungkan…</span>
+  </header>
+
+  <main>
+    <section>
+      <div class="section-head">
+        <h1>Stok Barang</h1>
+        <button id="refresh" class="secondary small-btn" type="button">Refresh</button>
+      </div>
+      <input id="search" autocomplete="off" placeholder="Cari kode / nama HP" aria-label="Cari kode atau nama HP">
+      <div id="inventory" aria-live="polite">Menghubungkan ke database…</div>
+    </section>
+
+    <section>
+      <h2>Transaksi</h2>
+      <input id="code" autocomplete="off" placeholder="Kode barang, contoh TG-G18">
+      <select id="type" aria-label="Jenis transaksi">
+        <option value="KELUAR">KELUAR</option>
+        <option value="MASUK">MASUK</option>
+      </select>
+      <input id="qty" type="number" min="1" step="1" value="1" inputmode="numeric" aria-label="Jumlah">
+      <input id="note" autocomplete="off" placeholder="Keterangan">
+      <button id="save" type="button">Simpan</button>
+      <p id="msg" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
